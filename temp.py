@@ -15,18 +15,29 @@ beamNL = BeamNL(n_nodes=dim.n_nodes, span=dim.span, chord=dim.chord, dm=dim.dm, 
 beamPOD = BeamNL_POD(beamNL, l=l,r=r)  
 beamPOD.center = 1
 beamPOD.POD_offline(V_samples[interior,:])
-beamPOD.POD_DEIM_offline(V_samples[interior,:], NL_samples[interior,:])
+#beamPOD.POD_DEIM_offline(V_samples[interior,:], NL_samples[interior,:])
 F_tip = beamNL.force_templates()[1]
-P_max = 20
+P_max = 200
 P = np.random.uniform(-P_max,P_max)
 P = np.round(P,2)
 F = F_tip*P
 #l_list = [50,60,70,80,90,100,110,120,130,140,150]
 #l_list_fine = [90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110]
 l_list = [2,3,4,5,6,7,8,9,10]
-NLinc = 0
+NLinc = 1
+
+#DYNAMIC
+tspan=(0,0.02)
+V_FOM,mes = beamNL.static_solver(F, anal_jac=True, legacy=False, full_output=True, NLinclude = NLinc)
+
+#solsol = beamNL.dynamic_solver(F, tspan)
+solFOM, tFOM, FOMtime = beamNL.dynamic_solver(0*F, tspan, V0=V_FOM)
+
+solPOD, tPOD, PODtime = beamPOD.dynamic_solver_POD(0*F, tspan, V0=V_FOM)
 
 
+
+"""
 test = Tester(10)
 res_dic = {}
 key = {'speedup':0,'percentCV':1,'X error':2}
@@ -39,7 +50,7 @@ for l in l_list:
     res = test.test_POD(beamNL, beamPOD, F_tip, test_points=test_points,full_output=True, NLinclude=0)
     res_dic[l] = res.copy()
    
-"""
+
 
 print('------FOM-------')
 start = time.time()

@@ -16,6 +16,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 import seaborn as sns
 from scipy.sparse import lil_matrix, eye, hstack, vstack, csr_matrix
+from scipy.integrate import solve_ivp
 
 
 
@@ -167,6 +168,7 @@ k0 = np.array([[0, 0, 0]]).T):
         self.initalize_FEM()
         self.M_gl, self.K_lin_gl = self.MK_gl()
         self.K_nl_gl_ = self.K_nl_gl_kron()
+        self.M_gl_inv = inv(self.M_gl)
         
         #BC and init
         self.V0, self.gBC, self.GBC, self.GBC_orth = self.init_and_BC()
@@ -612,14 +614,16 @@ k0 = np.array([[0, 0, 0]]).T):
             X = np.vstack([np.array([posx[i,:], posy[i,:], posz[i,:], rotx[i,:], roty[i,:], rotz[i,:]]) for i in range(n_nodes)])
         return X
     
-    def unpost(self, posz):
-        pass
+    def post_dyn(self, soly):
+        out = []
+        for y in soly:
+            out.append(self.post(y))
+        return np.array(out)
 
     def static(self, V_sol, F,  NLinclude):
         interior = slice(6,-6)
         V_sol = V_sol.reshape((-1,1))
         NL = self.K_nl_gl_ @ np.kron(V_sol, V_sol).reshape((-1,1))
-        self.NL_samples.append(NL.T)
         #print(NL.max())
         res_int = self.K_lin_gl@V_sol - F  + NL*NLinclude
         res = self.GBC@V_sol - self.gBC
@@ -757,6 +761,34 @@ k0 = np.array([[0, 0, 0]]).T):
         jacres = np.eye(self.n_nodes*12)
         jacres[interior,interior] = jacres_int[interior,interior]
         return jacres
+    
+    def dynamic_solver(self,F,tspan,V0=None,NLinclude=1):
+        interior = slice(6,-6)
+        V0 = self.V0 if V0 is None else V0
+        H = self.K_nl_gl_.reshape(self.n_nodes*12, self.n_nodes*12, self.n_nodes*12)
+        if not callable(F):
+            F0 = F
+            F = lambda t: F0*(1 - np.exp(-t*50))
+        def dVdt(t,V_sol):
+            print(t, V_sol.max())
+            V_sol = V_sol.reshape((-1,1))
+            NL = self.K_nl_gl_ @ np.kron(V_sol, V_sol).reshape((-1,1))
+            res_int = F(t) - self.K_lin_gl@V_sol - NL*NLinclude
+            ddt = self.M_gl_inv @ res_int
+            out = np.zeros_like(V_sol)
+            out[interior] = ddt[interior]
+            return out.reshape((-1,))
+        def jac(t,V):
+            Vc = V.reshape((-1)) 
+            jacres_int = self.K_lin_gl + np.einsum('ijk,j->ik', H, Vc) + np.einsum('ijk,k->ij', H, Vc)        
+            jacres = np.eye(self.n_nodes*12)
+            jacres[interior,interior] = jacres_int[interior,interior]
+            return -self.M_gl_inv @ jacres
+        start = time.time()
+        sol = solve_ivp(dVdt, tspan, V0.reshape(-1), method='BDF', t_eval=None, dense_output=False, events=None, vectorized=False, args=None, jac=jac)
+        FOMtime = time.time() - start
+        return sol.y, sol.t, FOMtime
+        
     
     
     
@@ -911,6 +943,33 @@ class BeamNL_POD:
         if timer:
             out.append(elasped)
         return out
+    
+    def dynamic_solver_POD(self,F,tspan,V0=None,NLinclude=1):
+        interior = self.interior
+        V0_r = self.V0_r if V0 is None else self.PHI.T @ V0[interior]
+        F0_r = self.PHI.T @ F[interior]
+        M_gl_r_inv = inv(self.M_gl_r)
+        if not callable(F):
+            F0_r = self.PHI.T @ F[interior]
+            def F_r(t):
+                if t < 0.01:
+                    return F0_r*(1 - np.exp(-t*50))
+                else:
+                    return 0*F0_r
+        else:
+            print('NOT IMPLEMENTED YET')
+            raise
+        def dV_rdt(t,V_r):
+            return -1*M_gl_r_inv @ self.static_POD(V_r, F_r(t).reshape(-1), NLinclude)
+        def jac(t,V):
+            return -M_gl_r_inv @ self.res_jac_POD(V)
+        start = time.time()
+        sol = solve_ivp(dV_rdt, tspan, V0_r.reshape(-1), method='BDF', t_eval=None, dense_output=False, events=None, vectorized=False, args=None, jac=jac)
+        PODtime = time.time() - start
+        soly_r = sol.y
+        soly = np.zeros((self.n_nodes*12,soly_r.shape[1]))
+        soly[interior,:] = self.PHI @ soly_r
+        return soly, sol.t, PODtime
         
     def _POD_DEIM_offline(self, X, NL,):
         r = self.l if self.r is None else self.r
