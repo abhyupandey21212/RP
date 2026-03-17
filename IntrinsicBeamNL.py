@@ -11,11 +11,8 @@ inv = np.linalg.inv
 from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 import scipy
-import dimentions as dim
 import aeroelastics as ae
 import time
-#from LbeamFEM import posz_EULER
-import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 import seaborn as sns
 from scipy.sparse import lil_matrix, eye, hstack, vstack, csr_matrix
@@ -771,7 +768,7 @@ class BeamNL_POD:
         self.n_nodes = beamNL.n_nodes
         self.n_joins = beamNL.n_joins
         self.l = l
-        self.r = r
+        self.r = r if not r is None else l
         self.M_gl = beamNL.M_gl
         self.K_lin_gl = beamNL.K_lin_gl
         self.n_nodes_per_elem = beamNL.nodes_per_elem
@@ -907,7 +904,7 @@ class BeamNL_POD:
         start = time.time()
         V_POD_r = fsolve(lambda V_r: static(V_r, F_r.reshape(-1), NLinclude), V0_r.reshape(-1), fprime=fprime ,full_output=full_output)
         elasped = time.time() - start
-        V_POD[interior] = self.PHI @ V_POD_r[0].reshape((-1,1)) + self.V_mean*self.center
+        V_POD[interior] = self.PHI @ V_POD_r[0].reshape((-1,1)) #+ self.V_mean*self.center
         out = [V_POD]
         if full_output:
             out.append(V_POD_r[-1])
@@ -952,97 +949,111 @@ class BeamNL_POD:
         self.M_gl_r = PHI.T @ self.M_gl[interior,interior] @ PHI
         self.K_lin_gl_r = PHI.T @ self.K_lin_gl[interior,interior] @ PHI
         self.V0_r = PHI.T @ self.V0[interior]       
-        self.DEIM_elems = {} #the elements whose nodes need to be kept in the reduced dimention K_nl_gl function
         self.DEIM_ps = np.where(self.P.T == 1)[1]
-        self.node_lookup = {el:[] for el in self.elems}
-        for p in self.DEIM_ps:
-            p+=6
-            els = []
-            for el,ran in self.index_to_elem.items():
-                if p in ran:
-                    els.append(el)
-                    self.DEIM_elems[el] = self.elems[el]
-                    self.node_lookup[el].append(p)
-
-        self.n_DEIM_elems = len(self.DEIM_elems)
-        self.n_DEIM_nodes = (self.n_DEIM_elems - 1)*(self.n_nodes_per_elem - 1) + self.n_nodes_per_elem
-        self.p2q = {p+6:q for q, p in enumerate(self.DEIM_ps)}
-
-               
-    def NL_POD(self, V_r):
-        interior, BC_dims, PHI = self.interior, sum(self.interior_lims), self.PHI
-        interior_dims, l = PHI.shape
-        V_sol_recon = np.zeros((interior_dims + BC_dims,1))
-        V_sol_recon[interior] = PHI @ V_r
-        NL = self.K_nl_gl(V_sol_recon) @ V_sol_recon
-        return NL
-        
-    def NL_FOM_rowwise(self, V_recon):
-        #p_to_q = self.p2q
-        #K_nl_DEIM = np.zeros((self.r, self.n_nodes*12))
-        #V_recon = np.zeros_like(self.V0)
-        #V_recon[interior] = self.PHI @ V_sol_r
-        K_nl_DEIM = np.zeros((self.n_nodes*12, self.n_nodes*12))
-
-        for el, n in self.elems.items():
-            i = n[0] - 1 #global first index of the elem
-            V_el = V_recon[i*12:(i+3)*12]
-            K_elem = self.K_nl_el(V_el)
-            for p in range(i*12, (i+self.nodes_per_elem)*12): # all the p in the elem
-                #q = p_to_q[p]
-                elj = p % (12*self.nodes_per_elem) #local index in elem
-                q = elj + i*12
-
-                #print(p, q, elj)
-                K_nl_DEIM[q,i*12:(i+3)*12] += K_elem[elj,:]
-        NL_DEIM = K_nl_DEIM @ V_recon
-        #PT_NL = self.P.T @ NL_DEIM[self.interior]
-        #PT_NL = np.zeros((self.r,1))
-        #print(PT_NL.max())
-        return NL_DEIM
+        finder = self.kron_finder()
+        self.relevant_xkronx = []
+        self.DEIM_idx = {}
+        for j in self.DEIM_ps:
+            res = finder[j]
+            self.relevant_xkronx.append(res)
+            for entry in  res.split(':'):
+                i,j = entry.split(',')
+                i = int(i.strip('[] ')) - 1
+                j = int(j.strip('[] ')) - 1
+                self.DEIM_idx[entry.strip()] = i*12 + j
+        self.PHI_DEIM = PHI[[v for v in self.DEIM_idx.values()],:]
+        self.PTK_nl_gl_ = self.P.T @ self.K_nl_gl_kron_DEIM(interior)
+            
+    def kron_finder(self):
+        out = []
+        self.finder2 = {}
+        k = 0
+        for i in range((self.n_nodes-1)*12): #ONLY INNER NODES
+            node_i = i // 12
+            inner_i = i % 12
+            for j in range((self.n_nodes-1)*12):
+                node_j = j // 12
+                inner_j = j % 12
+                out.append(f'[{node_i + 1},{inner_i + 1}] : [{node_j + 1},{inner_j + 1}]')
+                self.finder2[f'[{node_i + 1},{inner_i + 1}] : [{node_j + 1},{inner_j + 1}]'] = k
+                k+=1
+                
+        return out
     
-    def NL_DEIM4(self, V_sol_r):
-        V_recon = np.zeros_like(self.V0)
-        V_recon[interior] = self.PHI @ V_sol_r
-        #p_to_q = self.p2q
-        #K_nl_DEIM = np.zeros((self.r, self.n_nodes*12))
-        K_nl_DEIM = np.zeros((self.r, self.n_nodes*12))
+    def K_nl_gl_kron_DEIM(self,interior):
+        fNL = self.NL_kronecker_build()
+        K_el = (self.h/210)*np.kron(self.phiphiphi, fNL) 
+        l = K_el.shape
+        n_notjoins = self.n_nodes - self.n_joins
+        K_nl_global = np.zeros((self.n_nodes*12, 12*12*(5*self.n_joins + 3*n_notjoins)))
+        end = None
+        end_row = None
+        for el in self.elems.values():
+            start = end - 12*12 if not end is None else 0
+            end = start + l[1]
+            start_row = end_row - 12 if not end_row is None else 0
+            end_row = start_row + l[0]
+            #print(i, start, end, start_row, end_row)
+            K_nl_global[start_row:end_row,start:end] += K_el
+        
+        K_idx = []
+        for entry in self.relevant_xkronx:
+            a,b = entry.split(':')
+            a,b = a.strip(),b.strip()
+            node_i,inner_i = a.split(',')
+            node_i,inner_i = int(node_i.strip('[] ')) - 1, int(inner_i.strip('[] ')) - 1
 
-        for el, n in self.DEIM_elems.items():
-            i = n[0] - 1 #global first index of the elem
-            V_el = V_recon[i*12:(i+3)*12]
-            K_elem = self.K_nl_el(V_el)
-            for p in range(i*12, (i+3)*12):
-                elj = p % (12*self.nodes_per_elem) #local index in elem
-                q = elj + i*12
-                if q in self.node_lookup[el]:
-                    p = self.p2q[q]
-                    K_nl_DEIM[p,i*12:(i+3)*12] +=K_elem[elj,:]
-        PT_NL = K_nl_DEIM @ V_recon
-        #PT_NL = np.zeros((self.r,1))
-        return PT_NL
+            node_j,inner_j = b.split(',')
+            node_j, inner_j = int(node_j.strip('[] ')) - 1, int(inner_j.strip('[] ')) - 1
+            
+            key = f'[{node_i + 1},{inner_i + 1}] : [{node_j + 1},{inner_j + 1}]'
+            K_idx.append(self.finder2[key])
+        K_nl_gl_r_outerdim = K_nl_global @ self.K5
+        
+        return K_nl_gl_r_outerdim[interior,K_idx]        
+    
+    def kronV_DEIM(self,V_r):
+        V_DEIM = self.PHI_DEIM @ V_r
+        out = np.zeros((self.r,1))
+        for i in range(self.r):
+            x,y = self.relevant_xkronx[i].split(':')
+            x = x.strip()
+            y = y.strip()
+            out[i] = self.DEIM_idx[x] * self.DEIM_idx[y]
+        return out
 
-    def static_DEIM(self, V_sol_r, K_lin_r, F_r):
-        V_sol_r = V_sol_r.reshape((-1,1))
-        PT_NL = self.NL_DEIM4(V_sol_r)
-        NL_r = self.N_approx_l @ PT_NL
-        res = K_lin_r @ V_sol_r + NL_r - F_r 
-        self.history.append(V_sol_r)
+    def NL_DEIM(self, V_r):
+        return self.N_approx_l @ self.PTK_nl_gl_ @ self.kronV_DEIM(V_r)
+
+    def static_DEIM(self, V_r, F_r, NLinclude):
+        V_r = V_r.reshape((-1,1))
+        NL_r = self.NL_DEIM(V_r)
+        L_r = self.K_lin_gl_r @ V_r
+        res = L_r + NL_r*NLinclude - F_r
         return res.reshape((-1,))
     
-    def static_solver_DEIM(self, F, V0alt = None, full_output=True):
-        #POD DEIM ONLINE
-        V0r = self.V0_r if V0alt is None else V0alt
-        PHI, interior = self.PHI, self.interior
-        F_r = PHI.T @ F[interior]
+    
+    def static_solver_DEIM(self, F, full_output=True, V0=None, anal_jac=False, NLinclude = 1, diagnostic = False, timer=False):
+        interior = self.interior
         V_DEIM = np.zeros_like(self.V0)
-        V_DEIM_r_full = scipy.optimize.fsolve(lambda V_r: self.static_DEIM(V_r, self.K_lin_gl_r, F_r), V0r, full_output = True)#method='anderson', options={'ftol':1e-10})
-        V_DEIM_r = V_DEIM_r_full[0]
-        V_DEIM[interior] = PHI @ V_DEIM_r.reshape((-1,1))
-        if full_output:
-            return V_DEIM, V_DEIM_r_full[-1]
+        F_r = self.PHI.T @ F[interior]
+        V0_r = self.V0_r if V0 is None else self.PHI.T @ V0[interior]
+        static = self.static_DEIM
+        if anal_jac:
+            raise('NOT IMPLEMENTED...')
+            #fprime = self.res_jac_POD
         else:
-            return V_DEIM
+            fprime=None
+        start = time.time()
+        V_DEIM_r = fsolve(lambda V_r: static(V_r, F_r.reshape((-1,1)), NLinclude), V0_r.reshape(-1), fprime=fprime ,full_output=full_output)
+        elasped = time.time() - start
+        V_DEIM[interior] = self.PHI @ V_DEIM_r[0].reshape((-1,1)) #+ self.V_mean*self.center
+        out = [V_DEIM]
+        if full_output:
+            out.append(V_DEIM_r[-1])
+        if timer:
+            out.append(elasped)
+        return out
  
 #IMPORTING SAMPLES
 
@@ -1052,16 +1063,9 @@ class Tester:
     def __init__(self, n_threads):
         self.n_threads = n_threads
         
-    
-    def rel_error(self, true, approx):
-        return np.linalg.norm(true - approx) / np.linalg.norm(true)
-    def test_POD(self, beamNL, beamPOD, F_shape, test_points=100, P_max = 200, redoifnoCV = True, plotting=False):
-        FOM_times = []
-        POD_times = []
-        POD_Xerrors = []
-        POD_Verrors = []
+    def FOM_timer(self, beamNL,F_shape,P_max=200,test_points=1000):
+        times = []
         i=0
-        print(i)
         while i < test_points:
             #print(f'-----{i}-----')
             P = np.random.uniform(-P_max,P_max)
@@ -1069,52 +1073,82 @@ class Tester:
             #print('------FOM-------')
             start = time.time()
             V_FOM,mes = beamNL.static_solver(F)
-            FOM_time = time.time() - start
-            FOM_times.append(FOM_time)
+            times.append(time.time() - start)
+            if mes == 'The solution converged.':
+                i+=1
+        return np.mean(times)
+                
+    
+    def rel_error(self, true, approx):
+        return np.linalg.norm(true - approx) / np.linalg.norm(true)
+    
+    def test_POD(self, beamNL, beamPOD, F_shape, test_points=100, P_max = 150, redoifnoCV = True, full_output = False, NLinclude=1):
+        FOM_times = []
+        POD_times = []
+        POD_timesCV = []
+
+        POD_Xerrors = []
+        POD_XerrorsCV = []
+
+        POD_Verrors = []
+        i=0
+        j = 0
+        while i < test_points:
+            P = np.random.uniform(-P_max,P_max)
+            F = F_shape*P
+            start = time.time()
+            V_FOM,mes = beamNL.static_solver(F,NLinclude=NLinclude)
+            FOM_times.append(time.time() - start)
             X_FOM = beamNL.post(V_FOM)
             
-            #print('------POD-------')
-            V_POD, mes1, POD_time = beamPOD.static_solver_POD(F,timer=True)
+            V_POD, mes1, POD_time = beamPOD.static_solver_POD(F,timer=True,NLinclude=NLinclude)
             POD_times.append(POD_time)
             X_POD = beamPOD.post(V_POD)
-            #print(mes1)
-            if redoifnoCV and not mes1:
-                continue
-            i+=1
-            #print('-----ERRORS-----')
+            Xerr = self.rel_error(X_FOM, X_POD)
             POD_Verrors.append(self.rel_error(V_FOM, V_POD))
-            POD_Xerrors.append(self.rel_error(X_FOM, X_POD))
-            if plotting:
-               x = beamNL.eta_grid
-               plt.figure()
-               plt.plot(x, X_FOM[2::6], label=f'FOM, {FOM_time}')
-               plt.plot(x, X_POD[2::6], label=f'POD, {POD_time}', ls='dashed')
-               #plt.plot(x, X_DEIM[2::6] ,label=f'DEIM, {DEIM_time}', ls='dotted')
-               #plt.plot(x, posz_EULER(P), label='Linaer analytical')
-               plt.legend()
-               plt.title(P)
-               plt.show()
-        return [np.mean(POD_Verrors), np.mean(POD_Xerrors), np.mean(FOM_times), np.mean(POD_times)]
+            POD_Xerrors.append(Xerr)
+            ifmes1 = mes1 == 'The solution converged.' 
+            if ifmes1:
+                i+=1
+                POD_timesCV.append(POD_time)
+                POD_XerrorsCV.append(Xerr)
+            j+=1
+            if j > 1.5*test_points:
+                break
+
+        eV = np.mean(POD_Verrors)
+        eX = np.mean(POD_Xerrors)
+        eXCV = np.mean(POD_XerrorsCV)
+        tPOD  = np.mean(POD_times)
+        tFOM = np.mean(FOM_times)
+        tPODCV = np.mean(POD_timesCV)
+        CV = i/test_points
+        speedup = tPOD/tFOM
+        out = [speedup, CV,eX]
+        if full_output:
+            out = out + [eV,tPOD,tFOM]
+        return out
 
     def _test_POD_worker(self, l):
         """Picklable wrapper for multiprocessing."""
         #print(l)
+        interior = slice(6,-6)
         self.beamPOD = BeamNL_POD(self.beamNL, l=l)    
-        self.beamPOD.POD_offline(self.V_samples)
-        return self.test_POD(self.beamNL, self.beamPOD, l, self.F_shape,           test_points=self.test_points, P_max=self.P_max,         redoifnoCV=self.redoifnoCV, plotting=False)
+        self.beamPOD.POD_offline(self.V_samples[interior,:])
+        return self.test_POD(self.beamNL, self.beamPOD, self.F_shape,           test_points=self.test_points, P_max=self.P_max,         redoifnoCV=self.redoifnoCV)
     
-    def batch_test_POD(self, l_min, l_max, l_step,
-                       F_shape, test_points=100, P_max=250, redoifnoCV=False, plotting=False):
+    def batch_test_POD(self, beamNL, V_samples, l_list,
+                       F_shape, test_points=100, P_max=200, redoifnoCV=False, plotting=False):
+        self.beamNL = beamNL
+        self.V_samples = V_samples
         self.F_shape = F_shape
         self.test_points = test_points
         self.P_max = P_max
         self.redoifnoCV = redoifnoCV
-        self.plotting = plotting
         with ProcessPoolExecutor(max_workers=self.n_threads) as executor:
             results = list(executor.map(
                 self._test_POD_worker,
-                np.arange(l_min, l_max, l_step)
-            ))
+                l_list))
         self.results = np.array(results)
         return results
         

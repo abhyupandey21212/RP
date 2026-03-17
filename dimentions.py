@@ -8,7 +8,7 @@ import numpy as np
 inv = np.linalg.inv
 
 #Dimention
-n_nodes = 9
+n_nodes = 15
 dt = 0.001
 time_grid = np.arange(0, 1+dt, dt)
 span, chord = [0.55, 0.1] #meters, span, chord, height
