@@ -31,7 +31,7 @@ tspan=(0,0.02)
 V_FOM,mes = beamNL.static_solver(F, anal_jac=True, legacy=False, full_output=True, NLinclude = NLinc)
 
 #solsol = beamNL.dynamic_solver(F, tspan)
-solFOM, tFOM, FOMtime = beamNL.dynamic_solver(0*F, tspan, V0=V_FOM)
+#solFOM, tFOM, FOMtime = beamNL.dynamic_solver(0*F, tspan, V0=V_FOM)
 
 solPOD, tPOD, PODtime = beamPOD.dynamic_solver_POD(0*F, tspan, V0=V_FOM)
 

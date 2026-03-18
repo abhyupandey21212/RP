@@ -13,7 +13,7 @@ from LbeamFEM import posz_EULER
 import os
 from concurrent.futures import ProcessPoolExecutor
 import matplotlib.pyplot as plt
-
+import time
 
 
 
@@ -135,6 +135,100 @@ def mesh_convergence_post(samples_input):
     plt.ylabel('Relative error')
     #plt.ylim((0,0.5))
     return errors
+
+class Tester:
+    def __init__(self, n_threads):
+        self.n_threads = n_threads
+        
+    def FOM_timer(self, beamNL,F_shape,P_max=200,test_points=1000):
+        times = []
+        i=0
+        while i < test_points:
+            #print(f'-----{i}-----')
+            P = np.random.uniform(-P_max,P_max)
+            F = F_shape*P
+            #print('------FOM-------')
+            start = time.time()
+            V_FOM,mes = beamNL.static_solver(F)
+            times.append(time.time() - start)
+            if mes == 'The solution converged.':
+                i+=1
+        return np.mean(times)
+                
+    
+    def rel_error(self, true, approx):
+        return np.linalg.norm(true - approx) / np.linalg.norm(true)
+    
+    def test_POD(self, beamNL, beamPOD, F_shape, test_points=100, P_max = 150, redoifnoCV = True, full_output = False, NLinclude=1):
+        FOM_times = []
+        POD_times = []
+        POD_timesCV = []
+
+        POD_Xerrors = []
+        POD_XerrorsCV = []
+
+        POD_Verrors = []
+        i=0
+        j = 0
+        while i < test_points:
+            P = np.random.uniform(-P_max,P_max)
+            F = F_shape*P
+            start = time.time()
+            V_FOM,mes = beamNL.static_solver(F,NLinclude=NLinclude)
+            FOM_times.append(time.time() - start)
+            X_FOM = beamNL.post(V_FOM)
+            
+            V_POD, mes1, POD_time = beamPOD.static_solver_POD(F,timer=True,NLinclude=NLinclude)
+            POD_times.append(POD_time)
+            X_POD = beamPOD.post(V_POD)
+            Xerr = self.rel_error(X_FOM, X_POD)
+            POD_Verrors.append(self.rel_error(V_FOM, V_POD))
+            POD_Xerrors.append(Xerr)
+            ifmes1 = mes1 == 'The solution converged.' 
+            if ifmes1:
+                i+=1
+                POD_timesCV.append(POD_time)
+                POD_XerrorsCV.append(Xerr)
+            j+=1
+            if j > 1.5*test_points:
+                break
+
+        eV = np.mean(POD_Verrors)
+        eX = np.mean(POD_Xerrors)
+        eXCV = np.mean(POD_XerrorsCV)
+        tPOD  = np.mean(POD_times)
+        tFOM = np.mean(FOM_times)
+        tPODCV = np.mean(POD_timesCV)
+        CV = i/test_points
+        speedup = tPOD/tFOM
+        out = [speedup, CV,eX]
+        if full_output:
+            out = out + [eV,tPOD,tFOM]
+        return out
+
+    def _test_POD_worker(self, l):
+        """Picklable wrapper for multiprocessing."""
+        #print(l)
+        interior = slice(6,-6)
+        self.beamPOD = BeamNL_POD(self.beamNL, l=l)    
+        self.beamPOD.POD_offline(self.V_samples[interior,:])
+        return self.test_POD(self.beamNL, self.beamPOD, self.F_shape,           test_points=self.test_points, P_max=self.P_max,         redoifnoCV=self.redoifnoCV)
+    
+    def batch_test_POD(self, beamNL, V_samples, l_list,
+                       F_shape, test_points=100, P_max=200, redoifnoCV=False, plotting=False):
+        self.beamNL = beamNL
+        self.V_samples = V_samples
+        self.F_shape = F_shape
+        self.test_points = test_points
+        self.P_max = P_max
+        self.redoifnoCV = redoifnoCV
+        with ProcessPoolExecutor(max_workers=self.n_threads) as executor:
+            results = list(executor.map(
+                self._test_POD_worker,
+                l_list))
+        self.results = np.array(results)
+        return results
+    
 
 
 if __name__ == '__main__':
