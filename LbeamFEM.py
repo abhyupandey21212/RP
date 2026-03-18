@@ -107,13 +107,6 @@ def static_ODE(K, F, X):
     return res.reshape((-1,))
 
 
-#IC and BC
-x0 = np.zeros((n_nodes*6, 1))
-xdot0 = np.zeros((n_nodes*6, 1))
-velz0 = np.array([[6.37845187e-25, 8.81518959e-02, 1.17481532e+00]]).T
-#xdot0[2::6,:] = velz0
-X0 = np.vstack((x0, xdot0))
-
 def dyn_sol(X0, P):
     sol = solve_ivp(lambda t,x: dXdt(A, P*Bu_t(t,x), x), t_span = (0, time_grid[-1]), t_eval = time_grid, y0 = X0.reshape((-1,)))
     
@@ -127,7 +120,6 @@ P = -5
 def posz_EULER(P):
     return [P*x*x*(3*span - x)/(6*EIy) for x in eta_grid]
 
-posz_theory = posz_EULER(P)
 
 def modal():
     beta = np.array([0.5968, 1.4942, 2.5002, 3.4999])*(np.pi / span)
@@ -148,9 +140,7 @@ def stat_sol(P, X0 = None):
     X_FOM = X[:n_nodes*6] #Positions
     V_FOM = X[n_nodes*6:] #Velocities
     return X_FOM, V_FOM
-X_FOM, V_FOM = stat_sol(P)
 
-posz_LFEM = X_FOM[2::6]
 
 # %%
 if __name__ == '__main__':

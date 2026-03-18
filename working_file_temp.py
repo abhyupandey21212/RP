@@ -2,12 +2,35 @@ from IntrinsicBeamNL import *
 import dimentions as dim
 import numpy as np
 import pandas as pd
+from NLbeamSampler import Tester
+import json
+
+def save_results(results, path):
+    def convert(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+    
+    with open(path, 'w') as f:
+        json.dump(results, f, default=convert, indent=2)
+
+def load_results(path):
+    with open(path, 'r') as f:
+        out = json.load(f)
+        formatted_out = {int(k):v for k,v in out.items()}
+        return formatted_out
+    
+    
 #POD PARAM
 l = 98
 #DEIM PARAM
 r = 150
-V_samples = pd.read_csv(f"Data/NONLn_nodes={dim.n_nodes}/V_samplesNONL.csv", header=None).to_numpy()  
-NL_samples = pd.read_csv(f"Data/n_nodes={dim.n_nodes}/NL_samples{dim.n_nodes}.csv", header=None).to_numpy()
+V_samples = pd.read_csv(f"Data/n_nodes={dim.n_nodes}/V_samples.csv", header=None).to_numpy()  
+#NL_samples = pd.read_csv(f"Data/n_nodes={dim.n_nodes}/NL_samples{dim.n_nodes}.csv", header=None).to_numpy()
 interior = slice(6,-6)
 
 #DEFINIING BEAM OBJECTS and training
@@ -21,37 +44,33 @@ P_max = 200
 P = np.random.uniform(-P_max,P_max)
 P = np.round(P,2)
 F = F_tip*P
-#l_list = [50,60,70,80,90,100,110,120,130,140,150]
-#l_list_fine = [90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110]
-l_list = [2,3,4,5,6,7,8,9,10]
+l_list = [30,45,60,70,80,90,100,110,120,120,130,140]
+l_list_fine = range(90,151)
 NLinc = 1
 
 #DYNAMIC
-tspan=(0,0.02)
-V_FOM,mes = beamNL.static_solver(F, anal_jac=True, legacy=False, full_output=True, NLinclude = NLinc)
+#tspan=(0,0.02)
+#V_FOM,mes = beamNL.static_solver(F, anal_jac=True, legacy=False, #full_output=True, NLinclude = NLinc)
 
 #solsol = beamNL.dynamic_solver(F, tspan)
 #solFOM, tFOM, FOMtime = beamNL.dynamic_solver(0*F, tspan, V0=V_FOM)
 
-solPOD, tPOD, PODtime = beamPOD.dynamic_solver_POD(0*F, tspan, V0=V_FOM)
+#solPOD, tPOD, PODtime = beamPOD.dynamic_solver_POD(0*F, tspan, V0=V_FOM)
 
-
-
-"""
 test = Tester(10)
 res_dic = {}
 key = {'speedup':0,'percentCV':1,'X error':2}
 test_points = 100
 
-for l in l_list:
+for l in l_list_fine:
     print(l)
     beamPOD = BeamNL_POD(beamNL, l=l)  
     beamPOD.POD_offline(V_samples[interior,:])
-    res = test.test_POD(beamNL, beamPOD, F_tip, test_points=test_points,full_output=True, NLinclude=0)
+    res = test.test_POD(beamNL, beamPOD, F_tip, test_points=test_points,full_output=True, NLinclude=1)
     res_dic[l] = res.copy()
    
 
-
+"""
 print('------FOM-------')
 start = time.time()
 V_FOM,mes = beamNL.static_solver(F, anal_jac=True, legacy=False, full_output=True, NLinclude = NLinc)

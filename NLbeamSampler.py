@@ -9,7 +9,7 @@ from IntrinsicBeamNL import BeamNL, BeamNL_POD
 import dimentions as dim
 import numpy as np
 import pandas as pd
-from LbeamFEM import posz_EULER
+#from LbeamFEM import posz_EULER
 import os
 from concurrent.futures import ProcessPoolExecutor
 import matplotlib.pyplot as plt
@@ -155,6 +155,74 @@ class Tester:
                 i+=1
         return np.mean(times)
                 
+    def jac_tester_worker(self,pars):
+        n_nodes, n_samples, F_idx, P_max = pars
+        beamNL = BeamNL(n_nodes=n_nodes, span=dim.span, chord=dim.chord, dm=dim.dm,r_g=dim.r_g, I_per_span=dim.mass_mom_per_span, Cinv=dim.Cinv)
+        F_shape = beamNL.force_templates()[F_idx]
+        fd_time = 0
+        jac_time = 0
+        for i in range(n_samples):
+            P = np.random.uniform(-P_max, P_max)
+            F = F_shape * P
+
+            start = time.time()
+            V = beamNL.static_solver(F, anal_jac=False)
+            fd_time += time.time() - start
+
+            start = time.time()
+            V = beamNL.static_solver(F, anal_jac=True)
+            jac_time += time.time() - start
+        return n_nodes, fd_time/n_samples, jac_time/n_samples
+    
+    def jac_tester_worker_POD(self,pars):
+        interior=slice(6,-6)
+        n_nodes, l, n_samples, F_idx, P_max = pars
+        beamNL = BeamNL(n_nodes=n_nodes, span=dim.span, chord=dim.chord, dm=dim.dm,r_g=dim.r_g, I_per_span=dim.mass_mom_per_span, Cinv=dim.Cinv)
+        F_shape = beamNL.force_templates()[F_idx]
+        beamPOD = beamPOD = BeamNL_POD(beamNL, l=l) 
+        V_samples = pd.read_csv(f"Data/n_nodes={n_nodes}/V_samples.csv", header=None).to_numpy()  
+        beamPOD.POD_offline(V_samples[interior,:])
+
+
+        fd_time = 0
+        jac_time = 0
+        for i in range(n_samples):
+            P = np.random.uniform(-P_max, P_max)
+            F = F_shape * P
+
+            start = time.time()
+            V = beamPOD.static_solver_POD(F, anal_jac=False)
+            fd_time += time.time() - start
+
+            start = time.time()
+            V = beamPOD.static_solver_POD(F, anal_jac=True)
+            jac_time += time.time() - start
+        return n_nodes, fd_time/n_samples, jac_time/n_samples
+    
+    def jac_tester(self, n_nodes_list, F_idx, P_max=200, n_samples=100, multithreading=True, POD=False):
+        n_threads = self.n_threads
+        worker = self.jac_tester_worker
+        pars_list = [[n_nodes,n_samples,F_idx,P_max] for n_nodes in n_nodes_list]
+
+        if POD:
+            worker = self.jac_tester_worker_POD
+            pars_list = [[n_nodes,l,n_samples,F_idx,P_max] for n_nodes,l in n_nodes_list]
+        times = [{},{}]
+        if multithreading:
+            with ProcessPoolExecutor(max_workers=n_threads) as executor:
+                results = list(executor.map(worker, pars_list))
+        else:
+            results = []
+            for pars in pars_list:
+                results.append(self.jac_tester_worker(pars))
+    
+        for n_nodes, fd_time, jac_time in results:
+            times[0][n_nodes] = fd_time
+            times[1][n_nodes] = jac_time
+    
+        return times
+    
+    
     
     def rel_error(self, true, approx):
         return np.linalg.norm(true - approx) / np.linalg.norm(true)
@@ -200,7 +268,7 @@ class Tester:
         tFOM = np.mean(FOM_times)
         tPODCV = np.mean(POD_timesCV)
         CV = i/test_points
-        speedup = tPOD/tFOM
+        speedup = tFOM/tPOD
         out = [speedup, CV,eX]
         if full_output:
             out = out + [eV,tPOD,tFOM]
@@ -232,12 +300,18 @@ class Tester:
 
 
 if __name__ == '__main__':
+    """
     interior = slice(6,-6)
+    test = Tester(10)
+    beamNL = BeamNL(n_nodes=dim.n_nodes, span=dim.span, chord=dim.chord, dm=dim.dm, r_g=dim.r_g, I_per_span=dim.mass_mom_per_span, Cinv=dim.Cinv)
+    F_idx = 1
+    res = test.jac_tester([(9,58),(15,98)], 1,POD=True)
+    """
     samplerFOM = BeamNL(dim.n_nodes, dim.span, dim.chord, dim.dm, dim.r_g, dim.mass_mom_per_span, dim.Cinv)
     Fytip_gl, Fztip_gl, Fy_gl, Fz_gl = samplerFOM.force_templates()
     no_threads = 10
 
-    pars = [[samplerFOM,20,500,False,True,f'{i+1}',0] for i in range(no_threads)]
+    pars = [[samplerFOM,20,500,False,True,f'{i+1}',1] for i in range(no_threads)]
     
     do_sample = True
     if do_sample:
@@ -246,5 +320,6 @@ if __name__ == '__main__':
     F_samples = stitcher('F_samples', no_threads)    
     NL_samples = stitcher('NL_samples', no_threads)    
     V_samples = stitcher('V_samples', no_threads)
+    
 
         
