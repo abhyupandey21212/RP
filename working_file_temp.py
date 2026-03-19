@@ -44,30 +44,18 @@ P_max = 200
 P = np.random.uniform(-P_max,P_max)
 P = np.round(P,2)
 F = F_tip*P
-l_list = [30,45,60,70,80,90,100,110,120,120,130,140]
-l_list_fine = range(90,151)
 NLinc = 1
 
-#DYNAMIC
-#tspan=(0,0.02)
-#V_FOM,mes = beamNL.static_solver(F, anal_jac=True, legacy=False, #full_output=True, NLinclude = NLinc)
 
-#solsol = beamNL.dynamic_solver(F, tspan)
-#solFOM, tFOM, FOMtime = beamNL.dynamic_solver(0*F, tspan, V0=V_FOM)
-
-#solPOD, tPOD, PODtime = beamPOD.dynamic_solver_POD(0*F, tspan, V0=V_FOM)
-
-test = Tester(10)
-res_dic = {}
-key = {'speedup':0,'percentCV':1,'X error':2}
-test_points = 100
-
-for l in l_list_fine:
-    print(l)
-    beamPOD = BeamNL_POD(beamNL, l=l)  
-    beamPOD.POD_offline(V_samples[interior,:])
-    res = test.test_POD(beamNL, beamPOD, F_tip, test_points=test_points,full_output=True, NLinclude=1)
-    res_dic[l] = res.copy()
+if __name__ == '__main__':
+    res_dic = {}
+    key = {'speedup':0,'percentCV':1,'X error':2}
+    test_points = 100
+    
+    interior = slice(6,-6)
+    test = Tester(16)
+    F_idx = 1
+    res = test.jac_tester([5,7,9,11,13,15,17,19,21,23,25,27,29,31], F_idx,multithreading=True,n_samples=100)
    
 
 """

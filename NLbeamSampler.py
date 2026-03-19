@@ -207,7 +207,7 @@ class Tester:
         if POD:
             worker = self.jac_tester_worker_POD
             pars_list = [[n_nodes,l,n_samples,F_idx,P_max] for n_nodes,l in n_nodes_list]
-        times = [{},{}]
+        times = [{},{},{}]
         if multithreading:
             with ProcessPoolExecutor(max_workers=n_threads) as executor:
                 results = list(executor.map(worker, pars_list))
@@ -217,9 +217,10 @@ class Tester:
                 results.append(self.jac_tester_worker(pars))
     
         for n_nodes, fd_time, jac_time in results:
-            times[0][n_nodes] = fd_time
-            times[1][n_nodes] = jac_time
-    
+            times[1][n_nodes] = fd_time
+            times[2][n_nodes] = jac_time
+            speedup = fd_time/jac_time
+            times[0][n_nodes] = speedup
         return times
     
     
