@@ -192,6 +192,9 @@ k0 = np.array([[0, 0, 0]]).T):
         self.NL_kronecker_build()
 
     def initalize_FEM(self):
+        """
+        Created the precomputed shape function intergral matrices
+        """
         h = self.h
         self.phiphi = (h/15)*np.array([[4,2,-1],
                                        [2,16,2],
@@ -230,6 +233,7 @@ k0 = np.array([[0, 0, 0]]).T):
     def NL_kronecker_build(self):
         """
         VERFIED
+        Builds the nonlinear term matrix as well as the nonlinear jacobian term matrix, to be used with the kronecker product.
         """
         M, C, h = self.M, self.C, self.h
         Xcross = np.array([[0, 0, 0, 0, 0, 1, 0, -1, 0],
@@ -338,8 +342,12 @@ k0 = np.array([[0, 0, 0]]).T):
     
 
     def krondelacergl(self, n):
-        # VERIFEID!!
-        #Build krondelacers as sparse
+        """
+        VERIFEID
+        
+        Created the delacing matrices K4 and K5 for the global FEM matrix
+        Builds krondelacers as sparse matrices for memory management
+        """
         k = self.n_nodes
         krondelacers = [lil_matrix((n*n, n*n*k), dtype=np.int8) for _ in range(k)]
         
@@ -410,6 +418,7 @@ k0 = np.array([[0, 0, 0]]).T):
     
     
     def K_nl_el(self, V):
+        """Legacy bersion of K_nl_el_kron, not using the Kronecker product"""
         L1, L2, L1T, M, C, h = self._L1, self._L2, self._L1T, self.M, self.C, self.h
         #V = (v11, v21, v21, v22, v13, v23)
         v1 = np.array([[V[:6], V[12:18], V[24:30]]]).reshape((-1,3)) #v11, v12, v13
@@ -498,7 +507,9 @@ k0 = np.array([[0, 0, 0]]).T):
     
 
     def force_templates(self):
-        #Loads
+        """
+        Generates some template forces for the FEM model, like uniform force, tip force along different axis
+        """
         fz_tip_ext = np.array([0,0,1])
         mz_tip_ext = np.array([0,0,0])
         fy_tip_ext = np.array([0,1,0])
@@ -531,6 +542,9 @@ k0 = np.array([[0, 0, 0]]).T):
         return V0, gBC, GBC, GBC_orth
     
     def post(self, Vn):
+        """
+        Post-processor, computes the displacement and finite rotations
+        """
         C, h = self.C, self.h
         if len(Vn.shape) == 1:
             f_int_x = Vn[6::12]
